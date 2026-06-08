@@ -441,7 +441,7 @@ td:nth-child(6) {
 
 th:nth-child(7),
 td:nth-child(7) {
-  width: 430px;
+  width: 500px;
 }
 
 .profile-name {
@@ -526,6 +526,14 @@ td:nth-child(7) {
 .actions .danger {
   border-color: #f2c3bf;
   color: var(--danger);
+}
+
+.actions {
+  align-items: stretch;
+}
+
+.actions button {
+  min-height: 32px;
 }
 
 .actions .danger:hover {

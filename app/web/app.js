@@ -27,6 +27,7 @@ const els = {
   deleteAuthLink: document.querySelector("#deleteAuthLinkBtn"),
   refresh: document.querySelector("#refreshBtn"),
   createForm: document.querySelector("#createForm"),
+  guidedCreate: document.querySelector("#guidedCreateBtn"),
   batchForm: document.querySelector("#batchForm"),
   suggestName: document.querySelector("#suggestNameBtn"),
   name: document.querySelector("#nameInput"),
@@ -275,7 +276,11 @@ function profileRow(profile) {
   const authTitle = officialAuth.ready ? "JSON已保存" : state.pollingProfile === profile.name ? "获取中" : "JSON未获取";
   const authMeta = officialAuth.ready
     ? [savedEmail, officialAuth.planType, officialAuth.lastRefresh ? formatTime(officialAuth.updatedAt) : ""].filter(Boolean).join(" · ")
-    : "点击获取JSON后完成官方授权";
+    : profile.status === "registering"
+      ? "注册页已打开；完成验证后保存邮箱，再点继续授权"
+      : profile.status === "auth_pending"
+        ? "已准备授权；点继续授权获取官方 JSON"
+        : "点击获取JSON后完成官方授权";
 
   return `
     <tr data-name="${escapeAttr(profile.name)}">
@@ -303,6 +308,8 @@ function profileRow(profile) {
         <select class="inline-input js-status">
           ${statusOption("empty", "空环境", profile.status)}
           ${statusOption("opened", "已打开", profile.status)}
+          ${statusOption("registering", "注册中", profile.status)}
+          ${statusOption("auth_pending", "待授权", profile.status)}
           ${statusOption("ready", "可用", profile.status)}
           ${statusOption("disabled", "停用", profile.status)}
         </select>
@@ -314,7 +321,8 @@ function profileRow(profile) {
       <td>
         <div class="actions">
           <button class="primary js-open-chatgpt">打开ChatGPT官网</button>
-          <button class="step-two js-start-official-login" title="第二步：启动官方 OAuth 授权并保存 auth.json">第二步 获取JSON</button>
+          <button class="js-open-register" title="打开注册入口，人工完成验证码/邮箱/头像等验证">注册入口</button>
+          <button class="step-two js-start-official-login" title="继续官方 OAuth 授权并保存 auth.json">继续授权</button>
           <button class="js-save">保存现有信息</button>
           <button class="danger js-delete">删除账号</button>
         </div>
@@ -360,6 +368,40 @@ async function openProfile(name, url = currentOpenUrl()) {
   upsertProfile(payload.profile);
   render();
   toast(`已打开 ${name}`);
+}
+
+async function openRegisterStep(row) {
+  const name = row.dataset.name;
+  const email = row.querySelector(".js-email").value;
+  const note = row.querySelector(".js-note").value || "等待人工注册/验证";
+  const profile = await patchProfile(
+    row,
+    {
+      email,
+      note,
+      status: "registering",
+    },
+    { quiet: true },
+  );
+  await openProfile(profile.name, linkForKind("register").url);
+  toast(`已在 ${profile.name} 的独立 Chrome 打开注册入口；验证步骤你手动处理`);
+}
+
+async function createGuidedProfile() {
+  const payload = await api("/api/profiles", {
+    method: "POST",
+    body: JSON.stringify({
+      name: els.name.value,
+      note: els.note.value || "注册向导：等待人工注册/验证",
+      status: "registering",
+    }),
+  });
+  upsertProfile(payload.profile);
+  render();
+  await openProfile(payload.profile.name, linkForKind("register").url);
+  els.note.value = "";
+  await suggestName();
+  toast("注册向导已启动：先完成页面注册/验证，再填邮箱并点继续授权");
 }
 
 async function patchProfile(row, updates, options = {}) {
@@ -458,14 +500,20 @@ async function copyText(value, successMessage = "已复制") {
 async function startOfficialLogin(name) {
   state.pollingProfile = name;
   render();
-  await api(`/api/profiles/${encodeURIComponent(name)}/official-login`, {
+  let targetName = name;
+  const row = document.querySelector(`tr[data-name="${CSS.escape(name)}"]`);
+  if (row) {
+    const profile = await saveProfile(row, { quiet: true, render: false });
+    targetName = profile.name;
+  }
+  await api(`/api/profiles/${encodeURIComponent(targetName)}/official-login`, {
     method: "POST",
     body: JSON.stringify({ mode: "web" }),
   });
   closeOfficialLoginModal();
-  toast(`已在 ${name} 的独立 Chrome 窗口打开授权页`);
+  toast(`已在 ${targetName} 的独立 Chrome 窗口打开授权页`);
   await loadProfiles();
-  startPollingLogin(name);
+  startPollingLogin(targetName);
 }
 
 async function checkOfficialLogin(name, quiet = false) {
@@ -722,6 +770,14 @@ els.suggestName.addEventListener("click", () => {
   suggestName().catch((error) => toast(error.message));
 });
 
+els.guidedCreate.addEventListener("click", async () => {
+  try {
+    await createGuidedProfile();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
 els.createForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -769,6 +825,8 @@ els.body.addEventListener("click", async (event) => {
   try {
     if (event.target.closest(".js-open-chatgpt")) {
       await openProfile(name, linkForKind("official").url);
+    } else if (event.target.closest(".js-open-register")) {
+      await openRegisterStep(row);
     } else if (event.target.closest(".js-start-official-login")) {
       await startOfficialLogin(name);
     } else if (event.target.closest(".js-view-json")) {
