@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import base64
+import datetime
+import hashlib
+import html
 import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,8 +31,19 @@ AUTH_LINKS_FILE = WORKSPACE / "auth-links.json"
 WEB_ROOT = APP_DIR / "web"
 META_FILE = ".profile-meta.json"
 DEFAULT_URL = "https://chatgpt.com"
+AUTH_ISSUER = "https://auth.openai.com"
+AUTH_DISCOVERY_URL = f"{AUTH_ISSUER}/.well-known/openid-configuration"
+CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+CODEX_SCOPES = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 CODEX_DEVICE_URL = "https://auth.openai.com/codex/device"
+DEFAULT_CALLBACK_PORT = 1455
 LOGIN_PROCS: dict[str, dict] = {}
+OAUTH_LOGINS: dict[str, dict] = {}
+OAUTH_LOCK = threading.Lock()
+OAUTH_CALLBACK_LOCK = threading.Lock()
+OAUTH_CALLBACK_SERVER = None
+OAUTH_CALLBACK_PORT = 0
+AUTH_CONFIG: dict | None = None
 
 
 def now_ms() -> int:
@@ -511,15 +530,291 @@ def read_text_if_exists(path: Path) -> str:
         return ""
 
 
+def utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def oauth_metadata() -> dict:
+    global AUTH_CONFIG
+    if AUTH_CONFIG:
+        return AUTH_CONFIG
+
+    fallback = {
+        "authorization_endpoint": f"{AUTH_ISSUER}/authorize",
+        "token_endpoint": "https://auth0.openai.com/oauth/token",
+    }
+    try:
+        request = urllib.request.Request(AUTH_DISCOVERY_URL, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        AUTH_CONFIG = {
+            "authorization_endpoint": payload.get("authorization_endpoint") or fallback["authorization_endpoint"],
+            "token_endpoint": payload.get("token_endpoint") or fallback["token_endpoint"],
+        }
+    except Exception:
+        AUTH_CONFIG = fallback
+    return AUTH_CONFIG
+
+
+def pkce_pair() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(96)[:128]
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+def ensure_oauth_callback_server() -> int:
+    global OAUTH_CALLBACK_SERVER, OAUTH_CALLBACK_PORT
+    with OAUTH_CALLBACK_LOCK:
+        if OAUTH_CALLBACK_SERVER:
+            return OAUTH_CALLBACK_PORT
+
+        preferred = int(os.environ.get("PROFILE_MANAGER_AUTH_PORT") or DEFAULT_CALLBACK_PORT)
+        for port in range(preferred, preferred + 50):
+            try:
+                server = ThreadingHTTPServer(("127.0.0.1", port), OAuthCallbackHandler)
+            except OSError:
+                continue
+            OAUTH_CALLBACK_SERVER = server
+            OAUTH_CALLBACK_PORT = port
+            thread = threading.Thread(target=server.serve_forever, name=f"OAuthCallback:{port}", daemon=True)
+            thread.start()
+            return port
+    raise RuntimeError("No available local OAuth callback port found.")
+
+
+def callback_redirect_uri() -> str:
+    return f"http://localhost:{ensure_oauth_callback_server()}/auth/callback"
+
+
+def authorization_url(redirect_uri: str, state: str, challenge: str) -> str:
+    params = {
+        "response_type": "code",
+        "client_id": CODEX_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": CODEX_SCOPES,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "id_token_add_organizations": "true",
+        "codex_cli_simplified_flow": "true",
+        "state": state,
+        "originator": "Codex Desktop",
+    }
+    return oauth_metadata()["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
+
+
+def remove_oauth_login_for_profile(name: str) -> None:
+    with OAUTH_LOCK:
+        for state, record in list(OAUTH_LOGINS.items()):
+            if record.get("profile") == name:
+                OAUTH_LOGINS.pop(state, None)
+
+
+def oauth_login_for_profile(name: str) -> dict | None:
+    cutoff = now_ms() - 30 * 60 * 1000
+    with OAUTH_LOCK:
+        for state, record in list(OAUTH_LOGINS.items()):
+            if int(record.get("startedAt") or 0) < cutoff:
+                OAUTH_LOGINS.pop(state, None)
+                continue
+            if record.get("profile") == name:
+                return dict(record)
+    return None
+
+
+def start_web_oauth_login(name: str) -> dict:
+    path = profile_dir(name)
+    path.mkdir(parents=True, exist_ok=True)
+    terminate_login_process(path.name)
+    remove_oauth_login_for_profile(path.name)
+
+    verifier, challenge = pkce_pair()
+    state = secrets.token_urlsafe(32)
+    redirect_uri = callback_redirect_uri()
+    login_url = authorization_url(redirect_uri, state, challenge)
+    with OAUTH_LOCK:
+        OAUTH_LOGINS[state] = {
+            "profile": path.name,
+            "startedAt": now_ms(),
+            "mode": "web",
+            "status": "running",
+            "state": state,
+            "codeVerifier": verifier,
+            "redirectUri": redirect_uri,
+            "loginUrl": login_url,
+            "error": "",
+        }
+
+    try:
+        open_profile(path.name, login_url)
+    except Exception:
+        with OAUTH_LOCK:
+            OAUTH_LOGINS.pop(state, None)
+        raise
+    return official_login_status(path.name)
+
+
+def exchange_oauth_code(code: str, redirect_uri: str, verifier: str) -> dict:
+    form = urllib.parse.urlencode(
+        {
+            "grant_type": "authorization_code",
+            "client_id": CODEX_CLIENT_ID,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        oauth_metadata()["token_endpoint"],
+        data=form,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Token exchange failed: HTTP {exc.code}: {detail[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Token exchange failed: {exc.reason}") from exc
+
+
+def save_official_auth(name: str, token_payload: dict) -> dict:
+    id_token = token_payload.get("id_token") or ""
+    access_token = token_payload.get("access_token") or ""
+    refresh_token = token_payload.get("refresh_token") or ""
+    if not id_token or not access_token:
+        raise RuntimeError("Auth response did not include required tokens.")
+
+    id_claims = decode_jwt_payload(id_token)
+    access_claims = decode_jwt_payload(access_token)
+    id_auth = id_claims.get("https://api.openai.com/auth") if isinstance(id_claims, dict) else {}
+    access_auth = access_claims.get("https://api.openai.com/auth") if isinstance(access_claims, dict) else {}
+    account_id = (
+        token_payload.get("account_id")
+        or (access_auth or {}).get("chatgpt_account_id")
+        or (id_auth or {}).get("chatgpt_account_id")
+        or ""
+    )
+    payload = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": id_token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_id": account_id,
+        },
+        "last_refresh": utc_now_iso(),
+    }
+
+    codex_home = profile_codex_home(name)
+    codex_home.mkdir(parents=True, exist_ok=True)
+    path = official_auth_path(name)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+    profile_path = profile_dir(name)
+    meta = read_meta(profile_path)
+    email = id_claims.get("email") or access_claims.get("email") or ""
+    if email and not meta.get("email"):
+        meta["email"] = email
+    meta["status"] = "ready"
+    meta["updatedAt"] = now_ms()
+    write_meta(profile_path, meta)
+    return official_auth_record(name)
+
+
+def complete_oauth_callback(query: dict[str, list[str]]) -> tuple[bool, str, str]:
+    state = (query.get("state") or [""])[0]
+    code = (query.get("code") or [""])[0]
+    upstream_error = (query.get("error_description") or query.get("error") or [""])[0]
+    if not state:
+        return False, "授权失败", "回调缺少 state。"
+
+    with OAUTH_LOCK:
+        record = OAUTH_LOGINS.get(state)
+        if record:
+            record["status"] = "exchanging"
+
+    if not record:
+        return False, "授权失败", "这个授权状态已经过期，请回到管理台重新点第二步。"
+    if upstream_error:
+        with OAUTH_LOCK:
+            record["status"] = "error"
+            record["error"] = upstream_error
+        return False, "授权失败", upstream_error
+    if not code:
+        with OAUTH_LOCK:
+            record["status"] = "error"
+            record["error"] = "回调缺少授权 code。"
+        return False, "授权失败", "回调缺少授权 code。"
+
+    try:
+        tokens = exchange_oauth_code(code, record["redirectUri"], record["codeVerifier"])
+        auth = save_official_auth(record["profile"], tokens)
+        with OAUTH_LOCK:
+            OAUTH_LOGINS.pop(state, None)
+        email = auth.get("email") or record["profile"]
+        return True, "auth.json 已保存", f"{email} 的官方 auth.json 已保存，可以关闭这个窗口。"
+    except Exception as exc:
+        with OAUTH_LOCK:
+            record["status"] = "error"
+            record["error"] = str(exc)
+        return False, "授权失败", str(exc)
+
+
+class OAuthCallbackHandler(BaseHTTPRequestHandler):
+    server_version = "ChatGPTProfileOAuth/1.0"
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/auth/callback":
+            self.send_html(HTTPStatus.NOT_FOUND, "Not Found", "Unknown callback path.")
+            return
+        ok, title, message = complete_oauth_callback(urllib.parse.parse_qs(parsed.query))
+        status = HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST
+        self.send_html(status, title, message)
+
+    def send_html(self, status: HTTPStatus, title: str, message: str) -> None:
+        color = "#15803d" if status == HTTPStatus.OK else "#b91c1c"
+        body = f"""<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>{html.escape(title)}</title>
+<body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:40px;line-height:1.6;">
+  <h1 style="color:{color};margin:0 0 12px;">{html.escape(title)}</h1>
+  <p>{html.escape(message)}</p>
+  <p>回到 ChatGPT Profile Manager 后点“查状态”或等待列表自动刷新。</p>
+</body>
+</html>""".encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 def start_official_login(name: str, mode: str = "web") -> dict:
     path = profile_dir(name)
     path.mkdir(parents=True, exist_ok=True)
     clean_finished_login(path.name)
+    if mode not in {"web", "device"}:
+        raise ValueError("Invalid login mode.")
+    if mode == "web":
+        return start_web_oauth_login(path.name)
+
     existing = LOGIN_PROCS.get(path.name)
     if existing and existing["process"].poll() is None:
         return official_login_status(path.name)
-    if mode not in {"web", "device"}:
-        raise ValueError("Invalid login mode.")
 
     codex_home = profile_codex_home(path.name)
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -571,6 +866,27 @@ def official_login_status(name: str) -> dict:
     path = profile_dir(name)
     clean_finished_login(path.name)
     auth = official_auth_record(path.name)
+    oauth_record = oauth_login_for_profile(path.name)
+    if oauth_record:
+        running = oauth_record.get("status") in {"running", "exchanging"}
+        message = "授权页已在该账号的独立 Chrome 窗口打开。"
+        if oauth_record.get("status") == "exchanging":
+            message = "授权完成，正在保存 auth.json。"
+        if oauth_record.get("status") == "error":
+            message = "授权失败，请重新点第二步。"
+        return {
+            "profile": path.name,
+            "running": running,
+            "startedAt": oauth_record.get("startedAt"),
+            "mode": "web",
+            "loginUrl": oauth_record.get("loginUrl") or "",
+            "deviceUrl": oauth_record.get("loginUrl") or CODEX_DEVICE_URL,
+            "code": "",
+            "message": message,
+            "error": oauth_record.get("error") or "",
+            "officialAuth": auth,
+        }
+
     record = LOGIN_PROCS.get(path.name)
     output = ""
     error_output = ""
@@ -602,6 +918,7 @@ def official_login_status(name: str) -> dict:
 def stop_official_login(name: str) -> dict:
     path = profile_dir(name)
     terminate_login_process(path.name)
+    remove_oauth_login_for_profile(path.name)
     return official_login_status(path.name)
 
 
