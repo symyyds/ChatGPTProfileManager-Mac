@@ -56,6 +56,7 @@ const els = {
   copyOfficialCode: document.querySelector("#copyOfficialCodeBtn"),
   openChatGptLogin: document.querySelector("#openChatGptLoginBtn"),
   openOfficialLogin: document.querySelector("#openOfficialLoginBtn"),
+  copyOfficialUrl: document.querySelector("#copyOfficialUrlBtn"),
   checkOfficialLogin: document.querySelector("#checkOfficialLoginBtn"),
   authJsonModal: document.querySelector("#authJsonModal"),
   authJsonProfile: document.querySelector("#authJsonProfile"),
@@ -585,6 +586,7 @@ function renderOfficialLoginModal(payload = {}) {
   els.officialLoginUrl.textContent = state.officialLoginUrl || payload.message || "授权页会自动打开，完成后点查状态。";
   els.copyOfficialCode.disabled = !state.officialLoginCode;
   els.openOfficialLogin.disabled = !state.officialLoginUrl;
+  els.copyOfficialUrl.disabled = !state.officialLoginUrl;
 }
 
 function closeOfficialLoginModal() {
@@ -776,6 +778,10 @@ els.openOfficialLogin.addEventListener("click", async () => {
   } catch (error) {
     toast(error.message);
   }
+});
+
+els.copyOfficialUrl.addEventListener("click", async () => {
+  await copyText(state.officialLoginUrl, "授权 URL 已复制");
 });
 
 els.checkOfficialLogin.addEventListener("click", async () => {
