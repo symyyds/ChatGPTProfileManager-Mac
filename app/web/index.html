@@ -237,11 +237,13 @@
           </div>
           <div class="official-actions">
             <button id="copyOfficialCodeBtn" class="primary" type="button">复制代码</button>
+            <button id="openChatGptLoginBtn" type="button">打开ChatGPT登录页</button>
             <button id="openOfficialLoginBtn" type="button">重新打开授权页</button>
             <button id="checkOfficialLoginBtn" type="button">查状态</button>
           </div>
           <div class="official-url" id="officialLoginUrl">授权页会自动打开。</div>
           <ol class="login-steps">
+            <li>如果看到“你的会话已结束”，先点“打开ChatGPT登录页”，在这个独立窗口里重新登录。</li>
             <li>正常情况走网页授权，不需要手动下载 JSON。</li>
             <li>授权完成后回到这个页面点“查状态”，列表里会显示“JSON已保存”。</li>
             <li>如果出现设备码，复制代码后按页面提示输入。</li>

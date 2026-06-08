@@ -54,6 +54,7 @@ const els = {
   officialLoginUrl: document.querySelector("#officialLoginUrl"),
   officialLoginClose: document.querySelector("#officialLoginClose"),
   copyOfficialCode: document.querySelector("#copyOfficialCodeBtn"),
+  openChatGptLogin: document.querySelector("#openChatGptLoginBtn"),
   openOfficialLogin: document.querySelector("#openOfficialLoginBtn"),
   checkOfficialLogin: document.querySelector("#checkOfficialLoginBtn"),
   authJsonModal: document.querySelector("#authJsonModal"),
@@ -745,6 +746,16 @@ els.downloadAuthJson.addEventListener("click", () => {
 els.copyOfficialCode.addEventListener("click", async () => {
   if (!state.officialLoginCode) return;
   await copyText(state.officialLoginCode, "代码已复制");
+});
+
+els.openChatGptLogin.addEventListener("click", async () => {
+  if (!state.officialLoginProfile) return;
+  try {
+    await openProfile(state.officialLoginProfile, DEFAULT_LINKS.official.url);
+    toast("已在该账号的独立 Chrome 打开登录页");
+  } catch (error) {
+    toast(error.message);
+  }
 });
 
 els.openOfficialLogin.addEventListener("click", async () => {
