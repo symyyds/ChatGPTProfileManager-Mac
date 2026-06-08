@@ -1,0 +1,24 @@
+# Local account data and browser profiles
+chatgpt-profiles/*
+deleted-profiles/*
+!chatgpt-profiles/.gitkeep
+!deleted-profiles/.gitkeep
+
+# Local configuration
+auth-links.json
+
+# Runtime files
+app/manager*.log
+app/manager.pid
+*.log
+*.pid
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

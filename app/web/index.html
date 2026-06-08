@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatGPT Profile Manager</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>ChatGPT Profile Manager</h1>
+          <p>每个账号都是一套独立 Chrome 环境，先建环境，再打开登录/授权/注册入口，最后获取官方 auth.json。</p>
+        </div>
+        <div class="top-actions">
+          <button id="refreshBtn">刷新</button>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Profile summary">
+        <div>
+          <span class="metric-value" id="totalCount">0</span>
+          <span class="metric-label">总账号</span>
+        </div>
+        <div>
+          <span class="metric-value" id="readyCount">0</span>
+          <span class="metric-label">JSON 已保存</span>
+        </div>
+        <div>
+          <span class="metric-value" id="openedCount">0</span>
+          <span class="metric-label">已打开/待登录</span>
+        </div>
+        <div>
+          <span class="metric-value" id="emptyCount">0</span>
+          <span class="metric-label">空环境</span>
+        </div>
+      </section>
+
+      <section class="workflow">
+        <form id="createForm" class="panel create-panel">
+          <div class="section-head">
+            <div>
+              <h2>第一步：新建账号环境</h2>
+              <p>不需要先填邮箱。创建后选择打开 1 / 2 / 3 入口。</p>
+            </div>
+            <button type="button" id="suggestNameBtn">取下一个名字</button>
+          </div>
+
+          <div class="create-row">
+            <div class="field">
+              <label for="nameInput">账号环境名</label>
+              <input id="nameInput" type="text" placeholder="team01" required />
+            </div>
+            <div class="field">
+              <label for="noteInput">备注</label>
+              <input id="noteInput" type="text" placeholder="来源、套餐、用途，可后面再补" />
+            </div>
+          </div>
+
+          <div class="quick-links" id="quickLinkButtons" aria-label="新账号打开入口">
+            <label>创建后打开</label>
+            <div class="quick-grid">
+              <button type="button" class="link-card active" data-create-link="official">
+                <span>1</span>
+                <strong>官方登录网站</strong>
+                <small id="officialLoginLinkText">https://chatgpt.com</small>
+              </button>
+              <button type="button" class="link-card" data-create-link="auth">
+                <span>2</span>
+                <strong>Auth 授权网站</strong>
+                <small id="authLoginLinkText">https://auth.openai.com</small>
+              </button>
+              <button type="button" class="link-card" data-create-link="register">
+                <span>3</span>
+                <strong>注册账号网站</strong>
+                <small id="registerLinkText">羊毛入口</small>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="primary">新建账号并打开</button>
+          </div>
+        </form>
+
+        <section class="panel json-panel">
+          <div class="section-head">
+            <div>
+              <h2>第二步：获取 auth.json</h2>
+              <p>对列表里的账号点“获取JSON”，会跳到官方授权流程；成功后 JSON 自动保存在该账号里。</p>
+            </div>
+          </div>
+          <div class="json-status-box">
+            <div>
+              <span class="status-dot ok"></span>
+              <strong>已保存</strong>
+              <small>列表显示“JSON已保存”，无需下载。</small>
+            </div>
+            <div>
+              <span class="status-dot wait"></span>
+              <strong>未获取</strong>
+              <small>登录完成后再点获取或查状态。</small>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel link-panel">
+        <div class="section-head">
+          <div>
+            <h2>链接库</h2>
+            <p>默认用于 1 / 2 / 3。你也可以添加别的授权链接，然后在账号行里手动选择打开。</p>
+          </div>
+          <button id="deleteAuthLinkBtn" type="button">删除当前链接</button>
+        </div>
+        <div class="auth-grid">
+          <div class="field">
+            <label for="authLinkSelect">当前链接</label>
+            <select id="authLinkSelect"></select>
+          </div>
+          <div class="field">
+            <label for="urlInput">URL</label>
+            <input id="urlInput" type="url" value="https://chatgpt.com" />
+          </div>
+        </div>
+        <form id="authLinkForm" class="auth-add">
+          <div class="field">
+            <label for="authLinkNameInput">链接名称</label>
+            <input id="authLinkNameInput" type="text" placeholder="例如：学校授权、备用注册入口" />
+          </div>
+          <div class="field">
+            <label for="authLinkUrlInput">新增链接</label>
+            <input id="authLinkUrlInput" type="url" placeholder="https://..." required />
+          </div>
+          <div class="form-actions">
+            <button type="submit">添加链接</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="tools-row">
+        <div class="controls">
+          <div class="field grow">
+            <label for="searchInput">搜索</label>
+            <input id="searchInput" type="search" placeholder="账号名、邮箱、备注、路径" />
+          </div>
+          <div class="field">
+            <label for="statusFilter">状态</label>
+            <select id="statusFilter">
+              <option value="">全部</option>
+              <option value="ready">可用</option>
+              <option value="opened">已打开</option>
+              <option value="empty">空环境</option>
+              <option value="disabled">停用</option>
+            </select>
+          </div>
+        </div>
+
+        <form id="batchForm" class="panel batch-panel">
+          <div class="batch-row">
+            <div class="field">
+              <label for="prefixInput">批量前缀</label>
+              <input id="prefixInput" type="text" value="team" />
+            </div>
+            <div class="field small">
+              <label for="startInput">起始</label>
+              <input id="startInput" type="number" min="1" value="1" />
+            </div>
+            <div class="field small">
+              <label for="countInput">数量</label>
+              <input id="countInput" type="number" min="1" value="10" />
+            </div>
+            <div class="form-actions">
+              <button type="submit">批量预创建</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="table-wrap">
+        <div class="table-head">
+          <h2>账号列表</h2>
+          <div class="table-tools">
+            <a class="download-link" href="/api/profiles/auth.json">导出账号索引</a>
+            <span id="visibleCount">0 条</span>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>账号环境</th>
+                <th>邮箱</th>
+                <th>JSON 状态</th>
+                <th>账号状态</th>
+                <th>备注</th>
+                <th>最近打开</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="profileBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="authPicker" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="authPickerTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="authPickerTitle">选择要打开的链接</h2>
+            <p id="authPickerProfile">-</p>
+          </div>
+          <button id="authPickerClose" type="button">关闭</button>
+        </div>
+        <div id="authPickerList" class="link-list"></div>
+      </div>
+    </div>
+
+    <div id="officialLoginModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="officialLoginTitle">
+      <div class="modal-card official-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="officialLoginTitle">获取 auth.json</h2>
+            <p id="officialLoginProfile">-</p>
+          </div>
+          <button id="officialLoginClose" type="button">关闭</button>
+        </div>
+        <div class="official-body">
+          <div class="code-box">
+            <label>当前流程</label>
+            <div id="officialLoginCode" class="device-code">网页授权</div>
+          </div>
+          <div class="official-actions">
+            <button id="copyOfficialCodeBtn" class="primary" type="button">复制代码</button>
+            <button id="openOfficialLoginBtn" type="button">重新打开授权页</button>
+            <button id="checkOfficialLoginBtn" type="button">查状态</button>
+          </div>
+          <div class="official-url" id="officialLoginUrl">授权页会自动打开。</div>
+          <ol class="login-steps">
+            <li>正常情况走网页授权，不需要手动下载 JSON。</li>
+            <li>授权完成后回到这个页面点“查状态”，列表里会显示“JSON已保存”。</li>
+            <li>如果出现设备码，复制代码后按页面提示输入。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div id="authJsonModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="authJsonTitle">
+      <div class="modal-card json-viewer-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="authJsonTitle">auth.json</h2>
+            <p id="authJsonProfile">-</p>
+          </div>
+          <div class="modal-actions">
+            <button id="copyAuthJsonBtn" class="primary" type="button">复制JSON</button>
+            <button id="downloadAuthJsonBtn" type="button">下载JSON</button>
+            <button id="authJsonClose" type="button">关闭</button>
+          </div>
+        </div>
+        <div class="json-body">
+          <textarea id="authJsonContent" spellcheck="false" readonly></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
