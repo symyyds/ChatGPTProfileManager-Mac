@@ -362,7 +362,10 @@ def update_profile(name: str, updates: dict) -> dict:
     meta = read_meta(path)
     for key in ("email", "note", "status"):
         if key in updates:
-            meta[key] = str(updates.get(key) or "")
+            value = str(updates.get(key) or "")
+            if key == "email":
+                value = re.sub(r"\s+", "", value)
+            meta[key] = value
     meta["updatedAt"] = now_ms()
     write_meta(path, meta)
     new_name = updates.get("name")

@@ -361,6 +361,17 @@ function escapeAttr(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+function normalizeEmailInput(value) {
+  return String(value || "").replace(/\s+/g, "").trim();
+}
+
+function cleanEmailField(row) {
+  const input = row.querySelector(".js-email");
+  const cleaned = normalizeEmailInput(input.value);
+  if (input.value !== cleaned) input.value = cleaned;
+  return cleaned;
+}
+
 async function openProfile(name, url = currentOpenUrl()) {
   const payload = await api("/api/profiles/open", {
     method: "POST",
@@ -373,7 +384,7 @@ async function openProfile(name, url = currentOpenUrl()) {
 
 async function openRegisterStep(row) {
   const name = row.dataset.name;
-  const email = row.querySelector(".js-email").value;
+  const email = cleanEmailField(row);
   const note = row.querySelector(".js-note").value || "等待人工注册/验证";
   const profile = await patchProfile(
     row,
@@ -422,7 +433,7 @@ async function patchProfile(row, updates, options = {}) {
 async function saveProfile(row, options = {}) {
   const updates = {
     name: row.querySelector(".js-profile-name").value,
-    email: row.querySelector(".js-email").value,
+    email: cleanEmailField(row),
     status: row.querySelector(".js-status").value,
     note: row.querySelector(".js-note").value,
   };
@@ -442,7 +453,7 @@ async function autoSaveProfile(row, field) {
       if (nextName === row.dataset.name) return;
       updates.name = nextName;
     } else if (field === "email") {
-      updates.email = row.querySelector(".js-email").value;
+      updates.email = cleanEmailField(row);
     }
     const profile = await patchProfile(row, updates, {
       render: field !== "email",
@@ -845,7 +856,7 @@ els.body.addEventListener("click", async (event) => {
     } else if (event.target.closest(".js-download-json")) {
       downloadAuthJson(name);
     } else if (event.target.closest(".js-copy-email")) {
-      await copyText(row.querySelector(".js-email").value, "邮箱已复制");
+      await copyText(cleanEmailField(row), "邮箱已复制");
     } else if (event.target.closest(".js-save")) {
       await saveProfile(row);
     } else if (event.target.closest(".js-delete")) {
