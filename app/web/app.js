@@ -70,8 +70,6 @@ const DEFAULT_LINKS = {
   register: { label: "注册账号网站", url: "https://invite.kyl23333.xyz/" },
 };
 
-const DEVICE_AUTH_URL = "https://auth.openai.com/codex/device";
-
 let pollTimer = null;
 
 function toast(message) {
@@ -315,7 +313,7 @@ function profileRow(profile) {
       <td>
         <div class="actions">
           <button class="primary js-open-chatgpt">打开ChatGPT官网</button>
-          <button class="js-open-device-auth">打开授权链接</button>
+          <button class="step-two js-start-official-login" title="第二步：启动官方 OAuth 授权并保存 auth.json">第二步 获取JSON</button>
           <button class="js-save">保存现有信息</button>
           <button class="danger js-delete">删除账号</button>
         </div>
@@ -709,8 +707,8 @@ els.body.addEventListener("click", async (event) => {
   try {
     if (event.target.closest(".js-open-chatgpt")) {
       await openProfile(name, linkForKind("official").url);
-    } else if (event.target.closest(".js-open-device-auth")) {
-      await openProfile(name, DEVICE_AUTH_URL);
+    } else if (event.target.closest(".js-start-official-login")) {
+      await startOfficialLogin(name);
     } else if (event.target.closest(".js-view-json")) {
       await showAuthJson(name);
     } else if (event.target.closest(".js-download-json")) {

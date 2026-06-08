@@ -57,6 +57,18 @@ button.primary:hover {
   background: var(--accent-dark);
 }
 
+button.step-two {
+  border-color: #155eef;
+  background: #155eef;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 0 0 3px rgba(21, 94, 239, 0.13);
+}
+
+button.step-two:hover {
+  background: #1048b8;
+}
+
 button:disabled {
   color: #98a2b3;
   cursor: not-allowed;
