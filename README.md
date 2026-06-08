@@ -1,6 +1,6 @@
 # ChatGPT Profile Manager for macOS
 
-一个面向 macOS 的本地 ChatGPT 多账号独立浏览器环境管理台。每个账号使用独立 Chrome `user-data-dir`，方便分别登录、启动官方 OAuth 授权获取 auth.json、保存备注状态。
+一个面向 macOS 的本地 ChatGPT 多账号独立浏览器环境管理台。每个账号使用独立 Chrome `user-data-dir`，方便分别登录、在独立 Chrome 窗口启动官方 OAuth 授权获取 auth.json、保存备注状态。
 
 ## 前置要求
 

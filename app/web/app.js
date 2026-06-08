@@ -458,18 +458,24 @@ async function copyText(value, successMessage = "已复制") {
 async function startOfficialLogin(name) {
   state.pollingProfile = name;
   render();
-  const payload = await api(`/api/profiles/${encodeURIComponent(name)}/official-login`, {
+  await api(`/api/profiles/${encodeURIComponent(name)}/official-login`, {
     method: "POST",
     body: JSON.stringify({ mode: "web" }),
   });
-  showOfficialLogin(payload);
+  closeOfficialLoginModal();
+  toast(`已在 ${name} 的独立 Chrome 窗口打开授权页`);
   await loadProfiles();
   startPollingLogin(name);
 }
 
 async function checkOfficialLogin(name, quiet = false) {
   const payload = await api(`/api/profiles/${encodeURIComponent(name)}/official-login`);
-  showOfficialLogin(payload, quiet);
+  if (payload.officialAuth?.ready) {
+    if (!quiet) toast(`auth.json 已保存：${payload.officialAuth.email || payload.profile}`);
+    closeOfficialLoginModal();
+  } else if (!quiet) {
+    toast(payload.running ? "授权还在等待完成" : "授权流程未运行，请重新点第二步");
+  }
   await loadProfiles();
   return payload;
 }
