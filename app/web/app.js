@@ -71,6 +71,7 @@ const DEFAULT_LINKS = {
 };
 
 let pollTimer = null;
+const autoSaveTimers = new Map();
 
 function toast(message) {
   els.toast.textContent = message;
@@ -361,22 +362,77 @@ async function openProfile(name, url = currentOpenUrl()) {
   toast(`已打开 ${name}`);
 }
 
-async function saveProfile(row) {
+async function patchProfile(row, updates, options = {}) {
   const name = row.dataset.name;
-  const updates = {
-    name: row.querySelector(".js-profile-name").value,
-    email: row.querySelector(".js-email").value,
-    status: row.querySelector(".js-status").value,
-    note: row.querySelector(".js-note").value,
-  };
   const payload = await api(`/api/profiles/${encodeURIComponent(name)}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
   removeProfile(name);
   upsertProfile(payload.profile);
-  render();
-  toast(`已保存 ${payload.profile.name}`);
+  if (options.render !== false) render();
+  if (options.message) toast(options.message);
+  else if (!options.quiet) toast(`已保存 ${payload.profile.name}`);
+  return payload.profile;
+}
+
+async function saveProfile(row, options = {}) {
+  const updates = {
+    name: row.querySelector(".js-profile-name").value,
+    email: row.querySelector(".js-email").value,
+    status: row.querySelector(".js-status").value,
+    note: row.querySelector(".js-note").value,
+  };
+  return patchProfile(row, updates, options);
+}
+
+function autoSaveKey(row, field) {
+  return `${row.dataset.name}:${field}`;
+}
+
+async function autoSaveProfile(row, field) {
+  if (!row.isConnected) return;
+  try {
+    const updates = {};
+    if (field === "name") {
+      const nextName = row.querySelector(".js-profile-name").value;
+      if (nextName === row.dataset.name) return;
+      updates.name = nextName;
+    } else if (field === "email") {
+      updates.email = row.querySelector(".js-email").value;
+    }
+    const profile = await patchProfile(row, updates, {
+      render: field !== "email",
+      message: field === "name" ? "账号名已自动保存" : "邮箱已自动保存",
+    });
+    if (field === "email") {
+      row.dataset.name = profile.name;
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function scheduleAutoSave(row, field, delay = 800) {
+  const key = autoSaveKey(row, field);
+  clearTimeout(autoSaveTimers.get(key));
+  autoSaveTimers.set(
+    key,
+    setTimeout(() => {
+      autoSaveTimers.delete(key);
+      autoSaveProfile(row, field);
+    }, delay),
+  );
+}
+
+function flushAutoSave(row, field) {
+  const key = autoSaveKey(row, field);
+  const timer = autoSaveTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    autoSaveTimers.delete(key);
+  }
+  return autoSaveProfile(row, field);
 }
 
 async function copyText(value, successMessage = "已复制") {
@@ -727,6 +783,31 @@ els.body.addEventListener("click", async (event) => {
     }
   } catch (error) {
     toast(error.message);
+  }
+});
+
+els.body.addEventListener("input", (event) => {
+  const row = event.target.closest("tr[data-name]");
+  if (!row) return;
+  if (event.target.closest(".js-email")) {
+    scheduleAutoSave(row, "email");
+  }
+});
+
+els.body.addEventListener("focusout", (event) => {
+  const row = event.target.closest("tr[data-name]");
+  if (!row) return;
+  if (event.target.closest(".js-profile-name")) {
+    flushAutoSave(row, "name");
+  }
+});
+
+els.body.addEventListener("keydown", (event) => {
+  const row = event.target.closest("tr[data-name]");
+  if (!row || event.key !== "Enter") return;
+  if (event.target.closest(".js-profile-name")) {
+    event.preventDefault();
+    event.target.blur();
   }
 });
 
